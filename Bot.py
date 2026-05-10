@@ -12,274 +12,285 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 PORT = int(os.environ.get("PORT", 10000))
 USER_DATA_FILE = "user_data.json"
-PENDING_FILE = "pending_approvals.json"
 
-# User States
-STATE_SETUP = "setup"
-STATE_COMPLETED = "completed"
+# Channel to check (replace with your channel username)
+REQUIRED_CHANNEL = os.environ.get("REQUIRED_CHANNEL", "@BitAI_Official")  # Change this!
 
 # ============= DATA MANAGEMENT =============
-def load_json(file):
-    if os.path.exists(file):
-        with open(file, "r") as f:
+def load_user_data():
+    if os.path.exists(USER_DATA_FILE):
+        with open(USER_DATA_FILE, "r") as f:
             return json.load(f)
     return {}
 
-def save_json(file, data):
-    with open(file, "w") as f:
+def save_user_data(data):
+    with open(USER_DATA_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
-user_data = load_json(USER_DATA_FILE)
-pending_approvals = load_json(PENDING_FILE)
+user_data = load_user_data()
 
-def get_user_progress(user_id):
-    """Get user's completed steps"""
+def get_user_step(user_id):
     uid = str(user_id)
     if uid not in user_data:
         user_data[uid] = {
-            "completed_steps": [],
-            "current_step": 1,
-            "state": STATE_SETUP,
+            "step": 0,  # 0 = not started, 1-6 = current step, 7 = completed
+            "step1_verified": False,
+            "step2_verified": False,
+            "step3_verified": False,
+            "step4_verified": False,
+            "step5_verified": False,
+            "step6_verified": False,
+            "channel_joined": False,
             "last_reminder": None,
-            "reminder_count": 0
+            "reminder_count": 0,
+            "joined_at": None
         }
-        save_json(USER_DATA_FILE, user_data)
+        save_user_data(user_data)
     return user_data[uid]
 
-def update_user_step(user_id, step_num, is_completed=True):
+def verify_step(user_id, step_num):
     uid = str(user_id)
-    if uid not in user_data:
-        get_user_progress(user_id)
-    
-    if is_completed and step_num not in user_data[uid]["completed_steps"]:
-        user_data[uid]["completed_steps"].append(step_num)
-        user_data[uid]["completed_steps"].sort()
-    
-    # Determine next step
-    completed = user_data[uid]["completed_steps"]
-    if len(completed) == 6:
-        user_data[uid]["state"] = STATE_COMPLETED
-        user_data[uid]["current_step"] = 7  # Completed
-    else:
-        next_step = 1
-        for i in range(1, 7):
-            if i not in completed:
-                next_step = i
-                break
-        user_data[uid]["current_step"] = next_step
-    
-    user_data[uid]["last_action"] = datetime.now().isoformat()
-    user_data[uid]["reminder_count"] = 0
-    save_json(USER_DATA_FILE, user_data)
-    return user_data[uid]["current_step"]
+    if uid in user_data:
+        user_data[uid][f"step{step_num}_verified"] = True
+        user_data[uid]["step"] = step_num + 1 if step_num < 6 else 7
+        user_data[uid]["last_action"] = datetime.now().isoformat()
+        user_data[uid]["reminder_count"] = 0
+        save_user_data(user_data)
+        return True
+    return False
 
-def mark_step_pending(user_id, step_num):
+def is_step_verified(user_id, step_num):
     uid = str(user_id)
-    pending_approvals[uid] = {
-        "step": step_num,
-        "user_id": user_id,
-        "requested_at": datetime.now().isoformat(),
-        "status": "pending"
-    }
-    save_json(PENDING_FILE, pending_approvals)
+    return user_data.get(uid, {}).get(f"step{step_num}_verified", False)
 
-def approve_user_step(user_id):
+def mark_channel_joined(user_id):
     uid = str(user_id)
-    if uid in pending_approvals:
-        step_num = pending_approvals[uid]["step"]
-        del pending_approvals[uid]
-        save_json(PENDING_FILE, pending_approvals)
-        return step_num
-    return None
+    if uid in user_data:
+        user_data[uid]["channel_joined"] = True
+        user_data[uid]["joined_at"] = datetime.now().isoformat()
+        save_user_data(user_data)
+        return True
+    return False
 
-def get_pending_users():
-    return {uid: data for uid, data in pending_approvals.items() if data.get("status") == "pending"}
+def is_channel_joined(user_id):
+    uid = str(user_id)
+    return user_data.get(uid, {}).get("channel_joined", False)
 
-def get_incomplete_steps(user_id):
-    """Returns list of steps not yet completed"""
-    progress = get_user_progress(user_id)
-    all_steps = {1, 2, 3, 4, 5, 6}
-    completed = set(progress.get("completed_steps", []))
-    return list(all_steps - completed)
+def get_incomplete_users():
+    """Get users who haven't completed all steps and need reminders"""
+    incomplete = []
+    now = datetime.now()
+    for uid, data in user_data.items():
+        step = data.get("step", 0)
+        if step < 7:  # Not completed
+            last_action = data.get("last_action")
+            if last_action:
+                last_time = datetime.fromisoformat(last_action)
+                hours_inactive = (now - last_time).total_seconds() / 3600
+                if hours_inactive >= 6:
+                    last_reminder = data.get("last_reminder")
+                    if not last_reminder or (now - datetime.fromisoformat(last_reminder)).total_seconds() / 3600 >= 6:
+                        incomplete.append((uid, data))
+    return incomplete
 
-# ============= STEP DETAILS =============
-STEP_DETAILS = {
+# ============= STEP DEFINITIONS =============
+STEPS = {
     1: {
-        "name": "Binance Account",
-        "emoji": "🏦",
-        "instruction": "Create and verify your Binance account (KYC Level 2 required)",
+        "title": "Join Our Official Channel",
+        "emoji": "📢",
+        "description": "Stay updated with latest news, signals, and updates!",
+        "instruction": "Click the button below to join our official Telegram channel.\n\nAfter joining, click '✅ I Have Joined' to verify.",
         "action_buttons": [
-            [InlineKeyboardButton("🆓 Create Binance Account", url="https://accounts.binance.com/en/register?ref=1154159582")],
-            [InlineKeyboardButton("📱 Download Binance App", url="https://www.binance.com/en/download")]
+            [InlineKeyboardButton("📢 JOIN CHANNEL", url=f"https://t.me/{REQUIRED_CHANNEL.replace('@', '')}")]
         ],
-        "verification_note": "Make sure your account is fully verified with KYC Level 2"
+        "verification_type": "channel_join"
     },
     2: {
-        "name": "BitAI License",
-        "emoji": "🔑",
-        "instruction": "Activate your BitAI license inside the BitAI app",
+        "title": "Register BitAI Account",
+        "emoji": "📝",
+        "description": "Create your free BitAI trading account",
+        "instruction": "Click below to register your BitAI account.\n\nComplete the registration form and verify your email.\n\nAfter registration, click '✅ I Have Registered'.",
         "action_buttons": [
-            [InlineKeyboardButton("📝 Register BitAI", url="https://app.bitai.com.sg/h5/#/pages/sign/sign?invite=888")],
-            [InlineKeyboardButton("📱 Download BitAI App", url="https://fir.bitai.app/app.html")]
+            [InlineKeyboardButton("🚀 REGISTER NOW", url="https://app.bitai.com.sg/h5/#/pages/sign/sign?invite=888")]
         ],
-        "verification_note": "You need a valid license key from BitAI"
+        "verification_type": "button"
     },
     3: {
-        "name": "Binance Futures",
-        "emoji": "📈",
-        "instruction": "Activate Binance Futures trading on your account",
-        "action_buttons": [],
-        "verification_note": "Open Binance → Futures → Activate → Complete quiz"
+        "title": "Download BitAI App",
+        "emoji": "📱",
+        "description": "Get the BitAI app on your device",
+        "instruction": "Download and install the BitAI app on your iOS or Android device.\n\nOpen the app and login with your registered account.\n\nAfter installing, click '✅ I Have Installed'.",
+        "action_buttons": [
+            [InlineKeyboardButton("📱 DOWNLOAD iOS", url="https://fir.bitai.app/app.html")],
+            [InlineKeyboardButton("🤖 DOWNLOAD Android", url="https://fir.bitai.app/app.html")]
+        ],
+        "verification_type": "button"
     },
     4: {
-        "name": "API Connection",
-        "emoji": "🔌",
-        "instruction": "Create API keys and connect to BitAI",
-        "action_buttons": [],
-        "verification_note": "API must have Futures and Read permissions only"
+        "title": "Create Binance Account",
+        "emoji": "🏦",
+        "description": "Set up your Binance trading account",
+        "instruction": "Create a Binance account if you don't have one.\n\nComplete KYC verification (Level 2 required).\n\nEnable 2FA security.\n\nAfter completing, click '✅ I Have Created Binance'.",
+        "action_buttons": [
+            [InlineKeyboardButton("🆓 CREATE BINANCE", url="https://accounts.binance.com/en/register?ref=1154159582")],
+            [InlineKeyboardButton("📱 DOWNLOAD BINANCE", url="https://www.binance.com/en/download")]
+        ],
+        "verification_type": "button"
     },
     5: {
-        "name": "USDT Transfer",
-        "emoji": "💰",
-        "instruction": "Transfer USDT to your Binance Futures Wallet",
+        "title": "Connect API & Transfer Funds",
+        "emoji": "🔗",
+        "description": "Link Binance to BitAI",
+        "instruction": "1. Create API keys in Binance (Enable Futures & Read only)\n"
+                       "2. Connect API keys to BitAI app\n"
+                       "3. Transfer USDT to Binance Futures Wallet (min 50 USDT)\n\n"
+                       "After completing, click '✅ I Have Connected & Funded'.",
         "action_buttons": [],
-        "verification_note": "Minimum 50 USDT recommended"
+        "verification_type": "button"
     },
     6: {
-        "name": "Risk Profile",
+        "title": "Select Risk Profile & Activate",
         "emoji": "⚡",
-        "instruction": "Select your preferred risk level in BitAI",
+        "description": "Start automated trading",
+        "instruction": "1. Open BitAI app\n"
+                       "2. Select your risk profile:\n"
+                       "   🟢 Conservative (Low Risk)\n"
+                       "   🟡 Moderate (Medium Risk)\n"
+                       "   🔴 Aggressive (High Risk)\n"
+                       "3. Click 'Start Trading'\n\n"
+                       "After activation, click '✅ I Have Activated' to complete setup!",
         "action_buttons": [],
-        "verification_note": "Choose: Conservative (🟢), Moderate (🟡), or Aggressive (🔴)"
+        "verification_type": "button"
     }
 }
 
 # ============= KEYBOARDS =============
-def get_main_menu_keyboard(user_id):
-    progress = get_user_progress(user_id)
-    completed = progress.get("completed_steps", [])
-    current_step = progress.get("current_step", 1)
-    
-    keyboard = []
-    
-    # Show progress bar
-    progress_text = ""
-    for i in range(1, 7):
-        if i in completed:
-            progress_text += "✅"
-        elif i == current_step:
-            progress_text += "▶️"
-        else:
-            progress_text += "⬜"
-        if i < 6:
-            progress_text += "→"
-    
-    # Show current step button
-    keyboard.append([InlineKeyboardButton(f"📌 Continue: Step {current_step} - {STEP_DETAILS[current_step]['name']}", 
-                                         callback_data=f"continue_step_{current_step}")])
-    
-    # Show all steps
-    keyboard.append([InlineKeyboardButton("📋 View All Steps", callback_data="view_all_steps")])
-    
-    # Show completed steps
-    if completed:
-        completed_text = f"✅ Completed: {len(completed)}/6 steps"
-        keyboard.append([InlineKeyboardButton(completed_text, callback_data="show_completed")])
-    
-    keyboard.append([InlineKeyboardButton("❓ Need Help?", callback_data="need_help")])
-    keyboard.append([InlineKeyboardButton("📞 Contact Support", url="http://wa.me/6589691668")])
-    
-    return InlineKeyboardMarkup(keyboard), progress_text
-
 def get_step_keyboard(step_num, user_id):
-    step = STEP_DETAILS[step_num]
+    """Create keyboard for the current step"""
+    step = STEPS[step_num]
     keyboard = step["action_buttons"].copy()
     
-    # Submit button
-    keyboard.append([InlineKeyboardButton("✅ I have completed this step", callback_data=f"submit_step_{step_num}")])
+    # Add verification button based on step type
+    if step_num == 1:
+        keyboard.append([InlineKeyboardButton("✅ I HAVE JOINED", callback_data=f"verify_channel_join")])
+    else:
+        keyboard.append([InlineKeyboardButton("✅ I HAVE COMPLETED THIS STEP", callback_data=f"verify_step_{step_num}")])
     
-    # Navigation buttons
-    nav_buttons = []
-    if step_num > 1:
-        nav_buttons.append(InlineKeyboardButton("◀️ Previous Step", callback_data=f"go_to_step_{step_num-1}"))
-    if step_num < 6:
-        nav_buttons.append(InlineKeyboardButton("Next Step ▶️", callback_data=f"go_to_step_{step_num+1}"))
-    if nav_buttons:
-        keyboard.append(nav_buttons)
-    
-    # Help and support
-    keyboard.append([InlineKeyboardButton("❓ Step Help", callback_data=f"help_step_{step_num}")])
-    keyboard.append([InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")])
+    keyboard.append([InlineKeyboardButton("❓ Need Help?", callback_data=f"help_step_{step_num}")])
     keyboard.append([InlineKeyboardButton("📞 Contact Support", url="http://wa.me/6589691668")])
     
     return InlineKeyboardMarkup(keyboard)
 
-def get_admin_keyboard():
-    pending = get_pending_users()
-    if not pending:
-        return InlineKeyboardMarkup([[InlineKeyboardButton("📋 No Pending Approvals", callback_data="no_action")]])
-    
-    buttons = []
-    for uid, data in pending.items():
-        step = data['step']
-        step_name = STEP_DETAILS[step]['name']
-        buttons.append([InlineKeyboardButton(
-            f"👤 User {uid[:8]}... - Step {step}: {step_name}", 
-            callback_data=f"review_user_{uid}"
-        )])
-    buttons.append([InlineKeyboardButton("🔄 Refresh", callback_data="admin_menu")])
-    return InlineKeyboardMarkup(buttons)
-
-def get_review_keyboard(user_id):
+def get_welcome_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ APPROVE - Verified Correct", callback_data=f"approve_{user_id}")],
-        [InlineKeyboardButton("❌ REJECT - Not Completed", callback_data=f"reject_{user_id}")],
-        [InlineKeyboardButton("💬 Message User", url=f"tg://user?id={user_id}")],
-        [InlineKeyboardButton("🔙 Back to Admin", callback_data="admin_menu")]
+        [InlineKeyboardButton("🚀 START SETUP", callback_data="start_setup")],
+        [InlineKeyboardButton("📞 Contact Support", url="http://wa.me/6589691668")]
     ])
 
 def get_completed_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🏆 View My Progress", callback_data="view_progress")],
-        [InlineKeyboardButton("📞 Support", url="http://wa.me/6589691668")],
-        [InlineKeyboardButton("🔄 Restart Setup", callback_data="restart_setup")]
+        [InlineKeyboardButton("🏆 VIEW STATUS", callback_data="view_status")],
+        [InlineKeyboardButton("📞 Support", url="http://wa.me/6589691668")]
     ])
 
-def get_progress_keyboard(user_id):
+def get_admin_keyboard():
+    """Admin panel with pending verifications"""
+    pending = []
+    for uid, data in user_data.items():
+        step = data.get("step", 0)
+        if step < 7 and step > 0:
+            # Check which step needs verification
+            for s in range(1, 7):
+                if not data.get(f"step{s}_verified", False) and s == step:
+                    pending.append((uid, s))
+                    break
+    
+    if not pending:
+        return InlineKeyboardMarkup([[InlineKeyboardButton("📋 No Pending", callback_data="no_action")]])
+    
+    buttons = []
+    for uid, step_num in pending:
+        # Try to get username (we don't store it, so just show ID)
+        buttons.append([InlineKeyboardButton(
+            f"👤 User {uid[-6:]} - Step {step_num}: {STEPS[step_num]['title'][:20]}", 
+            callback_data=f"admin_verify_{uid}_{step_num}"
+        )])
+    buttons.append([InlineKeyboardButton("🔄 Refresh", callback_data="admin_menu")])
+    return InlineKeyboardMarkup(buttons)
+
+def get_admin_verify_keyboard(user_id, step_num):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")],
-        [InlineKeyboardButton("📞 Contact Support", url="http://wa.me/6589691668")]
+        [InlineKeyboardButton("✅ APPROVE", callback_data=f"approve_{user_id}_{step_num}")],
+        [InlineKeyboardButton("❌ REJECT", callback_data=f"reject_{user_id}_{step_num}")],
+        [InlineKeyboardButton("💬 Contact User", url=f"tg://user?id={user_id}")],
+        [InlineKeyboardButton("🔙 Back", callback_data="admin_menu")]
     ])
+
+def get_progress_bar(user_id):
+    """Visual progress bar"""
+    data = get_user_step(user_id)
+    completed = []
+    for i in range(1, 7):
+        if data.get(f"step{i}_verified", False):
+            completed.append(i)
+    
+    bar = ""
+    for i in range(1, 7):
+        if i in completed:
+            bar += "✅"
+        elif i == data.get("step", 1):
+            bar += "▶️"
+        else:
+            bar += "⬜"
+        if i < 6:
+            bar += "→"
+    
+    return bar, len(completed)
 
 # ============= MESSAGE HANDLERS =============
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     username = update.effective_user.first_name
     
-    progress = get_user_progress(user_id)
-    completed = len(progress.get("completed_steps", []))
+    data = get_user_step(user_id)
+    step = data.get("step", 0)
     
-    if completed == 6:
+    # Check if all steps completed
+    all_completed = all(data.get(f"step{i}_verified", False) for i in range(1, 7))
+    
+    if all_completed or step == 7:
         await update.message.reply_text(
-            f"🎉 *Welcome back, {username}!* 🎉\n\n"
+            f"🎉 *CONGRATULATIONS {username}!* 🎉\n\n"
             f"✅ Your BitAI setup is COMPLETE!\n"
-            f"🤖 BitAI is actively trading for you 24/7\n\n"
-            f"Use the buttons below to check your status or get support.",
+            f"🤖 BitAI is now actively trading for you 24/7\n\n"
+            f"*Your Stats:*\n"
+            f"• Account: Active 🟢\n"
+            f"• Trading: Automated 🤖\n"
+            f"• Status: Live 24/7\n\n"
+            f"Need help? Contact support anytime.",
             parse_mode="Markdown",
             reply_markup=get_completed_keyboard()
         )
-    else:
-        keyboard, progress_bar = get_main_menu_keyboard(user_id)
+    elif step == 0:
+        # New user
         await update.message.reply_text(
-            f"🚀 *Welcome to BitAI Setup, {username}!* 🚀\n\n"
-            f"*Your Progress:*\n"
-            f"{progress_bar}\n"
-            f"📊 *Completed:* {completed}/6 steps\n\n"
-            f"✨ *Next Step:* Step {progress['current_step']} - {STEP_DETAILS[progress['current_step']]['name']}\n\n"
-            f"Click below to continue your setup:",
+            f"🚀 *WELCOME TO BITAI {username}!* 🚀\n\n"
+            f"*What is BitAI?*\n"
+            f"BitAI is an automated crypto trading bot that:\n"
+            f"• Analyzes real-time market data 📊\n"
+            f"• Executes trades automatically 🤖\n"
+            f"• Works 24/7 without emotions ⚡\n\n"
+            f"*Setup Required:* Complete 6 simple steps\n"
+            f"*Time needed:* ~10-15 minutes\n\n"
+            f"Ready to start your AI trading journey?\n\n"
+            f"⚠️ *Note:* Each step must be verified before moving forward.",
             parse_mode="Markdown",
-            reply_markup=keyboard
+            reply_markup=get_welcome_keyboard()
         )
+    else:
+        # User in progress - show current step
+        current_step = step
+        await show_step(update, context, current_step, user_id)
 
 async def show_step(update: Update, context: ContextTypes.DEFAULT_TYPE, step_num, user_id=None, edit_mode=False):
     if not user_id:
@@ -288,38 +299,19 @@ async def show_step(update: Update, context: ContextTypes.DEFAULT_TYPE, step_num
     else:
         chat_id = user_id
     
-    step = STEP_DETAILS[step_num]
-    progress = get_user_progress(user_id)
-    completed = progress.get("completed_steps", [])
-    
-    if step_num in completed:
-        # Step already completed, show next incomplete step
-        next_step = get_user_progress(user_id)["current_step"]
-        if next_step <= 6:
-            await show_step(update, context, next_step, user_id, edit_mode)
-        return
-    
-    # Get progress bar
-    progress_bar = ""
-    for i in range(1, 7):
-        if i in completed:
-            progress_bar += "✅"
-        elif i == step_num:
-            progress_bar += "▶️"
-        else:
-            progress_bar += "⬜"
-        if i < 6:
-            progress_bar += "→"
+    step = STEPS[step_num]
+    progress_bar, completed_count = get_progress_bar(user_id)
     
     message = (
-        f"{step['emoji']} *STEP {step_num}/6: {step['name']}* {step['emoji']}\n\n"
+        f"{step['emoji']} *STEP {step_num}/6: {step['title']}* {step['emoji']}\n\n"
         f"*Progress:* {progress_bar}\n"
-        f"📊 *Completed:* {len(completed)}/6 steps\n\n"
-        f"*📌 Instructions:*\n{step['instruction']}\n\n"
-        f"*⚠️ Important:*\n{step['verification_note']}\n\n"
-        f"✅ *After completing this step*, click the 'I have completed this step' button below.\n"
-        f"Admin will verify and approve your submission.\n\n"
-        f"*🔒 Security Note:* Never share your API keys with anyone!"
+        f"✅ *Completed:* {completed_count}/6 steps\n\n"
+        f"*📌 Task:*\n{step['instruction']}\n\n"
+        f"*⚠️ Important:*\n"
+        f"• Complete this step fully\n"
+        f"• Click the verification button when done\n"
+        f"• Admin will approve before next step\n\n"
+        f"*Need help?* Click 'Need Help' below."
     )
     
     if edit_mode and update.callback_query:
@@ -336,229 +328,341 @@ async def show_step(update: Update, context: ContextTypes.DEFAULT_TYPE, step_num
             reply_markup=get_step_keyboard(step_num, user_id)
         )
 
-async def submit_step(update: Update, context: ContextTypes.DEFAULT_TYPE, step_num):
+async def verify_channel_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Verify if user joined the channel"""
     query = update.callback_query
     user_id = query.from_user.id
     username = query.from_user.username or query.from_user.first_name
     
-    progress = get_user_progress(user_id)
+    await query.answer("Checking channel membership...")
     
-    # Check if already completed
-    if step_num in progress.get("completed_steps", []):
+    try:
+        # Check if user is a member of the channel
+        chat_member = await context.bot.get_chat_member(chat_id=f"@{REQUIRED_CHANNEL.replace('@', '')}", user_id=user_id)
+        
+        if chat_member.status in ['member', 'administrator', 'creator']:
+            # User joined
+            mark_channel_joined(user_id)
+            verify_step(user_id, 1)
+            
+            await query.edit_message_text(
+                f"✅ *VERIFIED!* ✅\n\n"
+                f"Great job @{username}! You have successfully joined our channel.\n\n"
+                f"Step 1 is complete! Moving you to Step 2...",
+                parse_mode="Markdown"
+            )
+            
+            # Show step 2 after delay
+            await asyncio.sleep(1)
+            await show_step(update, context, 2, user_id)
+        else:
+            # User didn't join
+            await query.edit_message_text(
+                f"❌ *NOT VERIFIED* ❌\n\n"
+                f"@{username}, you haven't joined our official channel yet.\n\n"
+                f"Please click the 'JOIN CHANNEL' button below and join first.\n\n"
+                f"After joining, click '✅ I HAVE JOINED' again to verify.",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📢 JOIN CHANNEL", url=f"https://t.me/{REQUIRED_CHANNEL.replace('@', '')}")],
+                    [InlineKeyboardButton("✅ I HAVE JOINED", callback_data="verify_channel_join")],
+                    [InlineKeyboardButton("📞 Support", url="http://wa.me/6589691668")]
+                ])
+            )
+    except Exception as e:
+        print(f"Error checking membership: {e}")
+        await query.edit_message_text(
+            f"⚠️ *Could not verify* ⚠️\n\n"
+            f"Please make sure you:\n"
+            f"1. Click the JOIN CHANNEL button\n"
+            f"2. Join the channel\n"
+            f"3. Then click '✅ I HAVE JOINED' again\n\n"
+            f"Still having issues? Contact support.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📢 JOIN CHANNEL", url=f"https://t.me/{REQUIRED_CHANNEL.replace('@', '')}")],
+                [InlineKeyboardButton("✅ TRY AGAIN", callback_data="verify_channel_join")],
+                [InlineKeyboardButton("📞 Support", url="http://wa.me/6589691668")]
+            ])
+        )
+
+async def submit_step(update: Update, context: ContextTypes.DEFAULT_TYPE, step_num):
+    """User submits a step for verification"""
+    query = update.callback_query
+    user_id = query.from_user.id
+    username = query.from_user.username or query.from_user.first_name
+    
+    # Check if step already verified
+    if is_step_verified(user_id, step_num):
         await query.answer("This step is already completed!", show_alert=True)
         return
     
     await query.answer("Submitting for verification...")
     
-    # Mark as pending approval
-    mark_step_pending(user_id, step_num)
+    # Store pending verification (in memory for admin)
+    if not hasattr(context.bot_data, 'pending_verifications'):
+        context.bot_data['pending_verifications'] = {}
     
-    # Notify user
+    context.bot_data['pending_verifications'][str(user_id)] = {
+        "step": step_num,
+        "username": username,
+        "submitted_at": datetime.now().isoformat()
+    }
+    
     await query.edit_message_text(
-        f"⏳ *Submission Received!* ⏳\n\n"
-        f"Step {step_num}/6 - {STEP_DETAILS[step_num]['name']} has been submitted for verification.\n\n"
+        f"⏳ *STEP {step_num} SUBMITTED FOR VERIFICATION* ⏳\n\n"
+        f"@{username}, your submission has been sent to admin.\n\n"
         f"*What happens next?*\n"
-        f"1️⃣ Admin will review your submission\n"
-        f"2️⃣ You'll receive notification when approved/rejected\n"
-        f"3️⃣ Once approved, you can proceed to the next step\n\n"
-        f"📝 *Submitted by:* @{username}\n"
-        f"⏰ *Time:* {datetime.now().strftime('%I:%M %p')}\n\n"
+        f"• Admin will review your submission\n"
+        f"• You'll receive notification once approved/rejected\n"
+        f"• After approval, you'll move to Step {step_num + 1}\n\n"
+        f"⏰ Estimated wait time: Few minutes\n\n"
         f"Thank you for your patience! 🙏",
         parse_mode="Markdown"
     )
     
     # Notify admin
-    if ADMIN_ID and ADMIN_ID != 0:
-        admin_text = (
-            f"🔔 *NEW SUBMISSION READY FOR REVIEW* 🔔\n\n"
-            f"👤 *User:* @{username}\n"
-            f"🆔 *User ID:* `{user_id}`\n"
-            f"📌 *Step:* {step_num}/6 - {STEP_DETAILS[step_num]['name']}\n"
-            f"⏰ *Submitted:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-            f"Use /admin to review and approve this submission."
-        )
+    if ADMIN_ID:
         await context.bot.send_message(
             chat_id=ADMIN_ID,
-            text=admin_text,
+            text=f"🔔 *NEW SUBMISSION* 🔔\n\n"
+                 f"👤 User: @{username}\n"
+                 f"🆔 ID: `{user_id}`\n"
+                 f"📌 Step: {step_num}/6 - {STEPS[step_num]['title']}\n"
+                 f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                 f"Use /admin to review and approve.",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📋 Go to Admin Panel", callback_data="admin_menu")]
+                [InlineKeyboardButton("📋 GO TO ADMIN", callback_data="admin_menu")]
             ])
         )
 
-async def handle_approval(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id, is_approved):
+async def handle_admin_approval(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id, step_num, is_approved):
     query = update.callback_query
     await query.answer()
     
-    step_num = approve_user_step(user_id) if is_approved else None
-    
-    if is_approved and step_num:
-        # Update user progress
-        next_step = update_user_step(user_id, step_num, True)
+    if is_approved:
+        # Verify the step
+        verify_step(user_id, step_num)
+        
+        # Get user data
+        user = get_user_step(user_id)
+        next_step = step_num + 1 if step_num < 6 else 7
         
         # Notify user
         if next_step <= 6:
             await context.bot.send_message(
                 chat_id=int(user_id),
-                text=f"✅ *APPROVED!* ✅\n\n"
-                     f"Great job! Step {step_num} - {STEP_DETAILS[step_num]['name']} has been verified and approved!\n\n"
-                     f"Moving you to Step {next_step}...\n\n"
-                     f"Click the button below to continue:",
+                text=f"✅ *STEP {step_num} APPROVED!* ✅\n\n"
+                     f"Great work! Your submission for '{STEPS[step_num]['title']}' has been verified and approved.\n\n"
+                     f"Moving you to Step {next_step}... 🚀",
                 parse_mode="Markdown"
             )
-            # Show next step
+            # Create a mock callback for showing next step
+            class MockUpdate:
+                def __init__(self, user_id):
+                    self.effective_user = type('obj', (object,), {'id': user_id})()
+                    self.callback_query = type('obj', (object,), {
+                        'answer': lambda *a, **k: None,
+                        'edit_message_text': lambda *a, **k: None
+                    })()
+            
             await show_step(update, context, next_step, user_id)
         else:
             await context.bot.send_message(
                 chat_id=int(user_id),
                 text=f"🎉 *CONGRATULATIONS!* 🎉\n\n"
-                     f"✅ All 6 steps have been approved!\n"
-                     f"✅ BitAI is now ACTIVE and trading for you!\n"
-                     f"✅ Your account is fully configured for 24/7 automated trading\n\n"
-                     f"Welcome to the future of crypto trading! 🚀",
+                     f"✅ ALL 6 STEPS COMPLETED & APPROVED!\n\n"
+                     f"*Your BitAI is now ACTIVE!*\n\n"
+                     f"🤖 BitAI is now:\n"
+                     f"• Analyzing real-time market data\n"
+                     f"• Executing trades automatically\n"
+                     f"• Working 24/7 for you\n\n"
+                     f"Welcome to automated crypto trading! 🚀",
                 parse_mode="Markdown",
                 reply_markup=get_completed_keyboard()
             )
         
         await query.edit_message_text(
-            f"✅ *Approval Complete*\n\n"
-            f"User `{user_id}` has been approved for Step {step_num}.\n"
+            f"✅ *APPROVED*\n\n"
+            f"User `{user_id}` has been approved for Step {step_num}.\n\n"
             f"They have been notified and moved to the next step.",
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Admin", callback_data="admin_menu")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="admin_menu")]])
         )
-    
-    elif not is_approved:
-        # Remove from pending
-        if str(user_id) in pending_approvals:
-            del pending_approvals[str(user_id)]
-            save_json(PENDING_FILE, pending_approvals)
-        
-        # Notify user
+    else:
+        # Reject - notify user to retry
         await context.bot.send_message(
             chat_id=int(user_id),
-            text=f"❌ *Submission Not Approved* ❌\n\n"
-                 f"Unfortunately, your submission for Step {step_num} - {STEP_DETAILS[step_num]['name']} could not be approved.\n\n"
-                 f"*Possible reasons:*\n"
-                 f"• Task was not completed properly\n"
-                 f"• Required verification missing\n"
-                 f"• Need to double-check instructions\n\n"
-                 f"Please review the step carefully and try again.\n\n"
-                 f"Type /start to continue or contact support for help.",
+            text=f"❌ *STEP {step_num} NEEDS REVISION* ❌\n\n"
+                 f"Unfortunately, your submission for '{STEPS[step_num]['title']}' was not approved.\n\n"
+                 f"*Reason:* Please review the instructions carefully and ensure you've completed all requirements.\n\n"
+                 f"Please try again and click the verification button once done.\n\n"
+                 f"Need help? Contact support: http://wa.me/6589691668",
             parse_mode="Markdown"
         )
         
         await query.edit_message_text(
-            f"❌ *Submission Rejected*\n\n"
+            f"❌ *REJECTED*\n\n"
             f"User `{user_id}`'s submission for Step {step_num} has been rejected.\n\n"
             f"They have been notified to try again.",
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Admin", callback_data="admin_menu")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="admin_menu")]])
         )
+    
+    # Remove from pending
+    if hasattr(context.bot_data, 'pending_verifications'):
+        context.bot_data['pending_verifications'].pop(str(user_id), None)
+
+# ============= ADMIN HANDLERS =============
+async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("⛔ Access denied. Admin only.")
+        return
+    
+    # Collect pending submissions
+    pending = []
+    for uid, data in user_data.items():
+        step = data.get("step", 0)
+        if step > 0 and step < 7:
+            step_num = step
+            if not data.get(f"step{step_num}_verified", False):
+                pending.append((uid, step_num))
+    
+    if not pending:
+        await update.message.reply_text(
+            "📋 *ADMIN PANEL*\n\nNo pending verifications at this time.\n\nAll caught up! ✅",
+            parse_mode="Markdown"
+        )
+        return
+    
+    text = f"📋 *ADMIN PANEL - {len(pending)} Pending*\n\n"
+    for uid, step_num in pending:
+        text += f"• User `{uid[-8:]}` - Step {step_num}: {STEPS[step_num]['title']}\n"
+    
+    keyboard = []
+    for uid, step_num in pending:
+        keyboard.append([InlineKeyboardButton(
+            f"Verify User {uid[-6:]} - Step {step_num}",
+            callback_data=f"admin_verify_{uid}_{step_num}"
+        )])
+    keyboard.append([InlineKeyboardButton("🔄 Refresh", callback_data="admin_menu")])
+    
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def admin_verify_view(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id, step_num):
+    query = update.callback_query
+    await query.answer()
+    
+    text = (
+        f"👤 *Verify User Submission*\n\n"
+        f"🆔 User ID: `{user_id}`\n"
+        f"📌 Step: {step_num}/6 - {STEPS[step_num]['title']}\n"
+        f"📋 Task: {STEPS[step_num]['description']}\n\n"
+        f"*Verification Checklist:*\n"
+        f"• User claims to have completed this step\n"
+        f"• Please verify if they actually did\n"
+        f"• Contact user if needed\n\n"
+        f"*Decision:*"
+    )
+    
+    await query.edit_message_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=get_admin_verify_keyboard(user_id, step_num)
+    )
 
 # ============= REMINDER SYSTEM =============
-async def send_smart_reminder(context: ContextTypes.DEFAULT_TYPE, user_id, user_progress):
-    """Send professional reminder based on user's progress"""
-    user_id = int(user_id)
-    completed = user_progress.get("completed_steps", [])
-    current_step = user_progress.get("current_step", 1)
-    reminder_count = user_progress.get("reminder_count", 0) + 1
-    user_progress["reminder_count"] = reminder_count
-    save_json(USER_DATA_FILE, user_data)
+async def send_reminder(context: ContextTypes.DEFAULT_TYPE, user_id, user_info):
+    current_step = user_info.get("step", 1)
+    reminder_count = user_info.get("reminder_count", 0) + 1
     
-    # Calculate hours since last action
-    last_action = datetime.fromisoformat(user_progress.get("last_action", datetime.now().isoformat()))
-    hours_passed = int((datetime.now() - last_action).total_seconds() / 3600)
+    # Update reminder count
+    user_info["reminder_count"] = reminder_count
+    user_info["last_reminder"] = datetime.now().isoformat()
+    save_user_data(user_data)
     
-    # Different reminder messages based on reminder count
     if reminder_count == 1:
         message = (
             f"⏰ *Gentle Reminder* ⏰\n\n"
-            f"Hi there! We noticed you started your BitAI setup but haven't completed Step {current_step} yet.\n\n"
-            f"*Your Progress:* {len(completed)}/6 steps completed\n"
-            f"*Current Step:* {STEP_DETAILS[current_step]['name']}\n\n"
-            f"Need help? Just reply or use the buttons below to continue where you left off.\n\n"
-            f"Don't let manual trading hold you back - complete your setup to start automated 24/7 trading! 🚀"
+            f"We noticed you started setting up BitAI but haven't completed Step {current_step} yet.\n\n"
+            f"*Remaining:* Complete '{STEPS[current_step]['title']}'\n\n"
+            f"Type /start to continue where you left off.\n\n"
+            f"Don't miss out on automated 24/7 trading! 🚀"
         )
     elif reminder_count == 2:
         message = (
             f"🔔 *Important Update* 🔔\n\n"
-            f"It's been {hours_passed} hours since your last activity, and your BitAI setup is still incomplete.\n\n"
-            f"📊 *Current Status:*\n"
-            f"• ✅ Completed: {len(completed)} steps\n"
-            f"• ⏳ Pending: Step {current_step} - {STEP_DETAILS[current_step]['name']}\n\n"
-            f"*Why complete setup?*\n"
-            f"• Eliminate emotional trading mistakes\n"
-            f"• Execute trades 24/7 automatically\n"
-            f"• Based on real-time market data\n\n"
-            f"Click below to continue your setup now!"
-        )
-    elif reminder_count == 3:
-        message = (
-            f"⚠️ *Final Reminder* ⚠️\n\n"
-            f"This is your {reminder_count}rd reminder to complete your BitAI setup.\n\n"
-            f"*Remaining Steps:* {', '.join([f'Step {s}' for s in get_incomplete_steps(user_id)])}\n\n"
-            f"*Benefits you're missing out on:*\n"
-            f"• AI-powered trading signals\n"
-            f"• Automated risk management\n"
-            f"• 24/7 market monitoring\n"
-            f"• No emotions, just execution\n\n"
-            f"Don't let this opportunity pass! Complete your setup now."
+            f"It's been 12+ hours since your last activity.\n\n"
+            f"*Step {current_step} pending:* {STEPS[current_step]['title']}\n\n"
+            f"Complete your setup to start:\n"
+            f"• Automated trading 🤖\n"
+            f"• Real-time market analysis 📊\n"
+            f"• 24/7 profit opportunities 💰\n\n"
+            f"Click below to continue!"
         )
     else:
         message = (
-            f"🚨 *URGENT: Action Required* 🚨\n\n"
-            f"You have received multiple reminders to complete your BitAI setup.\n\n"
-            f"*Unfinished Steps:* {', '.join([f'Step {s}' for s in get_incomplete_steps(user_id)])}\n\n"
-            f"To activate your automated trading bot:\n"
-            f"1️⃣ Type /start\n"
-            f"2️⃣ Complete the remaining steps\n"
-            f"3️⃣ Get admin approval\n\n"
-            f"Need assistance? Contact support directly: http://wa.me/6589691668\n\n"
-            f"Don't delay - every hour of manual trading is potential profit lost! 💰"
+            f"⚠️ *Final Reminder* ⚠️\n\n"
+            f"This is your {reminder_count}rd reminder to complete BitAI setup.\n\n"
+            f"*Pending Steps:*\n"
+            f"• Step {current_step}: {STEPS[current_step]['title']}\n"
+            f"• Plus {6 - current_step} more steps after\n\n"
+            f"*Benefits you're missing:*\n"
+            f"• AI-powered trading\n"
+            f"• Eliminate emotions\n"
+            f"• Never miss trades\n\n"
+            f"Type /start NOW to complete setup!\n\n"
+            f"Need help? Contact support: http://wa.me/6589691668"
         )
     
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚀 Continue Setup", callback_data=f"continue_step_{current_step}")],
-        [InlineKeyboardButton("📞 Contact Support", url="http://wa.me/6589691668")],
-        [InlineKeyboardButton("❓ I Need Help", callback_data="need_help")]
+        [InlineKeyboardButton("🚀 CONTINUE SETUP", callback_data=f"resume_step_{current_step}")],
+        [InlineKeyboardButton("📞 Contact Support", url="http://wa.me/6589691668")]
     ])
     
     await context.bot.send_message(
-        chat_id=user_id,
+        chat_id=int(user_id),
         text=message,
         parse_mode="Markdown",
         reply_markup=keyboard
     )
-    
-    user_progress["last_reminder"] = datetime.now().isoformat()
-    save_json(USER_DATA_FILE, user_data)
 
 async def reminder_loop(context: ContextTypes.DEFAULT_TYPE):
-    """Check for users who need reminders (6-hour intervals)"""
+    """Check for users needing reminders every hour"""
     now = datetime.now()
     
     for uid, data in user_data.items():
+        step = data.get("step", 0)
         # Skip completed users
-        if data.get("state") == STATE_COMPLETED:
+        if step == 7:
             continue
         
-        # Skip if recently reminded (within 6 hours)
-        last_reminder = data.get("last_reminder")
-        if last_reminder:
-            last_reminder_time = datetime.fromisoformat(last_reminder)
-            if (now - last_reminder_time) < timedelta(hours=6):
-                continue
+        # Skip if all steps verified
+        all_verified = all(data.get(f"step{i}_verified", False) for i in range(1, 7))
+        if all_verified:
+            continue
         
-        # Check last action
-        last_action = datetime.fromisoformat(data.get("last_action", datetime.now().isoformat()))
-        hours_inactive = (now - last_action).total_seconds() / 3600
+        last_action = data.get("last_action")
+        if not last_action:
+            continue
         
-        # Send reminder after 6 hours of inactivity
+        last_time = datetime.fromisoformat(last_action)
+        hours_inactive = (now - last_time).total_seconds() / 3600
+        
+        # Check if 6+ hours inactive and no reminder in last 6 hours
         if hours_inactive >= 6:
-            await send_smart_reminder(context, uid, data)
+            last_reminder = data.get("last_reminder")
+            if not last_reminder:
+                await send_reminder(context, uid, data)
+            else:
+                reminder_time = datetime.fromisoformat(last_reminder)
+                if (now - reminder_time).total_seconds() / 3600 >= 6:
+                    await send_reminder(context, uid, data)
 
-# ============= CALLBACK HANDLERS =============
+# ============= CALLBACK HANDLER =============
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
@@ -566,218 +670,155 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await query.answer()
     
-    # Continue setup
-    if data.startswith("continue_step_"):
-        step_num = int(data.replace("continue_step_", ""))
-        await show_step(update, context, step_num, edit_mode=True)
+    # Start setup
+    if data == "start_setup":
+        get_user_step(user_id)  # Initialize
+        await show_step(update, context, 1, user_id)
+        await query.delete_message()
     
-    # Go to step
-    elif data.startswith("go_to_step_"):
-        step_num = int(data.replace("go_to_step_", ""))
-        await show_step(update, context, step_num, edit_mode=True)
+    # Verify channel join
+    elif data == "verify_channel_join":
+        await verify_channel_join(update, context)
     
-    # Submit step
-    elif data.startswith("submit_step_"):
-        step_num = int(data.replace("submit_step_", ""))
-        await submit_step(update, context, step_num)
-    
-    # View all steps
-    elif data == "view_all_steps":
-        progress = get_user_progress(user_id)
-        completed = progress.get("completed_steps", [])
-        text = "*📋 All Setup Steps:*\n\n"
-        for i in range(1, 7):
-            status = "✅" if i in completed else "⏳"
-            name = STEP_DETAILS[i]['name']
-            text += f"{status} **Step {i}:** {name}\n"
-            if i not in completed:
-                text += f"   → {STEP_DETAILS[i]['instruction'][:50]}...\n"
-            text += "\n"
+    # Verify step (2-6)
+    elif data.startswith("verify_step_"):
+        step_num = int(data.replace("verify_step_", ""))
+        # Check if previous steps are verified
+        previous_steps_verified = all(is_step_verified(user_id, i) for i in range(1, step_num))
+        if not previous_steps_verified and step_num > 1:
+            await query.answer("Please complete previous steps first!", show_alert=True)
+            return
         
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")],
-            [InlineKeyboardButton(f"📌 Continue Step {progress['current_step']}", 
-                                  callback_data=f"continue_step_{progress['current_step']}")]
-        ])
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=keyboard)
-    
-    # Help
-    elif data.startswith("help_step_"):
-        step_num = int(data.replace("help_step_", ""))
-        step = STEP_DETAILS[step_num]
-        help_text = (
-            f"❓ *Help for Step {step_num}: {step['name']}* ❓\n\n"
-            f"*Common Issues:*\n\n"
-            f"**Problem:** Can't verify my Binance account\n"
-            f"**Solution:** Make sure you have submitted valid ID and completed facial verification. Wait 5-15 minutes for approval.\n\n"
-            f"**Problem:** API keys not working\n"
-            f"**Solution:** Ensure you enabled Futures trading in API settings and whitelisted the IP address.\n\n"
-            f"**Problem:** Transfer not showing in Futures\n"
-            f"**Solution:** Make sure you selected 'Futures' as destination when transferring.\n\n"
-            f"Still need help? Contact support: http://wa.me/6589691668"
-        )
-        await query.edit_message_text(help_text, parse_mode="Markdown", 
-                                      reply_markup=InlineKeyboardMarkup([
-                                          [InlineKeyboardButton("🔙 Back to Step", callback_data=f"continue_step_{step_num}")],
-                                          [InlineKeyboardButton("📞 Contact Support", url="http://wa.me/6589691668")]
-                                      ]))
-    
-    # Main menu
-    elif data == "main_menu":
-        keyboard, progress_bar = get_main_menu_keyboard(user_id)
-        progress = get_user_progress(user_id)
-        completed = len(progress.get("completed_steps", []))
-        await query.edit_message_text(
-            f"🏠 *Main Menu*\n\n"
-            f"*Your Progress:*\n{progress_bar}\n"
-            f"📊 *Completed:* {completed}/6 steps\n\n"
-            f"*Current Step:* {STEP_DETAILS[progress['current_step']]['name']}\n\n"
-            f"Choose an option below:",
-            parse_mode="Markdown",
-            reply_markup=keyboard
-        )
-    
-    # Need help
-    elif data == "need_help":
-        await query.edit_message_text(
-            f"🆘 *How can we help you?* 🆘\n\n"
-            f"• 💬 *Chat Support:* {http://wa.me/6589691668}\n"
-            f"• 📧 *Email:* info@bitai.app\n"
-            f"• 📖 *FAQ:* https://bitai.app/faq\n\n"
-            f"*Common Solutions:*\n"
-            f"1️⃣ Tyoe /start to reset your session\n"
-            f"2️⃣ Use the 'Back' buttons to revisit steps\n"
-            f"3️⃣ Contact admin for urgent issues\n\n"
-            f"Our support team is available 24/7!",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")],
-                [InlineKeyboardButton("📞 WhatsApp Support", url="http://wa.me/6589691668")]
-            ])
-        )
+        # Check if step 1 (channel) is verified
+        if step_num > 1 and not is_channel_joined(user_id):
+            await query.answer("You must join the channel first!", show_alert=True)
+            return
+        
+        await submit_step(update, context, step_num)
     
     # Admin menu
     elif data == "admin_menu":
-        if ADMIN_ID and user_id == ADMIN_ID:
-            pending = get_pending_users()
-            if pending:
-                text = f"📋 *ADMIN PANEL* - {len(pending)} Pending Review(s)\n\n"
-                for uid, pend in pending.items():
-                    step = pend['step']
-                    text += f"• User `{uid}` - Step {step}: {STEP_DETAILS[step]['name']}\n"
-                await query.edit_message_text(text, parse_mode="Markdown", reply_markup=get_admin_keyboard())
-            else:
-                await query.edit_message_text("📋 No pending approvals. Great job!", 
-                                              reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refresh", callback_data="admin_menu")]]))
-        else:
-            await query.answer("Unauthorized access!", show_alert=True)
-    
-    # Review user
-    elif data.startswith("review_user_"):
-        if ADMIN_ID and user_id == ADMIN_ID:
-            target_user = data.replace("review_user_", "")
-            pend_data = pending_approvals.get(target_user, {})
-            step_num = pend_data.get("step", 1)
-            step = STEP_DETAILS[step_num]
+        if user_id == ADMIN_ID:
+            pending = []
+            for uid, udata in user_data.items():
+                step = udata.get("step", 0)
+                if 1 <= step < 7 and not udata.get(f"step{step}_verified", False):
+                    pending.append((uid, step))
             
-            review_text = (
-                f"👤 *Review Submission*\n\n"
-                f"🆔 *User ID:* `{target_user}`\n"
-                f"📌 *Step:* {step_num}/6 - {step['name']}\n"
-                f"📋 *Required Task:* {step['instruction']}\n"
-                f"✅ *Verification Point:* {step['verification_note']}\n"
-                f"⏰ *Submitted:* {pend_data.get('requested_at', 'Unknown')}\n\n"
-                f"*Action Required:* Verify the user has completed this step correctly."
-            )
-            await query.edit_message_text(review_text, parse_mode="Markdown", reply_markup=get_review_keyboard(target_user))
+            if pending:
+                text = f"📋 *Pending Verifications:* {len(pending)}\n\n"
+                keyboard = []
+                for uid, step_num in pending:
+                    text += f"• User `{uid[-8:]}` - Step {step_num}\n"
+                    keyboard.append([InlineKeyboardButton(
+                        f"Verify {uid[-6:]} - Step {step_num}",
+                        callback_data=f"admin_verify_{uid}_{step_num}"
+                    )])
+                keyboard.append([InlineKeyboardButton("🔄 Refresh", callback_data="admin_menu")])
+                await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            else:
+                await query.edit_message_text("📋 No pending verifications.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refresh", callback_data="admin_menu")]]))
+        else:
+            await query.answer("Unauthorized", show_alert=True)
+    
+    # Admin verify view
+    elif data.startswith("admin_verify_"):
+        if user_id == ADMIN_ID:
+            parts = data.replace("admin_verify_", "").split("_")
+            target_user = parts[0]
+            step_num = int(parts[1])
+            await admin_verify_view(update, context, target_user, step_num)
     
     # Approve
     elif data.startswith("approve_"):
-        if ADMIN_ID and user_id == ADMIN_ID:
-            target_user = data.replace("approve_", "")
-            await handle_approval(update, context, target_user, True)
+        if user_id == ADMIN_ID:
+            parts = data.replace("approve_", "").split("_")
+            target_user = parts[0]
+            step_num = int(parts[1])
+            await handle_admin_approval(update, context, target_user, step_num, True)
     
     # Reject
     elif data.startswith("reject_"):
-        if ADMIN_ID and user_id == ADMIN_ID:
-            target_user = data.replace("reject_", "")
-            await handle_approval(update, context, target_user, False)
+        if user_id == ADMIN_ID:
+            parts = data.replace("reject_", "").split("_")
+            target_user = parts[0]
+            step_num = int(parts[1])
+            await handle_admin_approval(update, context, target_user, step_num, False)
     
-    # View progress
-    elif data == "view_progress":
-        progress = get_user_progress(user_id)
-        completed = progress.get("completed_steps", [])
-        text = f"🏆 *Your BitAI Progress* 🏆\n\n"
-        for i in range(1, 7):
-            status = "✅" if i in completed else "⏳"
-            text += f"{status} Step {i}: {STEP_DETAILS[i]['name']}\n"
-        text += f"\n📊 *Total:* {len(completed)}/6 steps completed\n"
-        text += f"🤖 Status: {'ACTIVE 🟢' if len(completed) == 6 else 'In Progress 🟡'}"
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=get_progress_keyboard(user_id))
+    # Resume step
+    elif data.startswith("resume_step_"):
+        step_num = int(data.replace("resume_step_", ""))
+        await show_step(update, context, step_num, user_id, True)
     
-    # Show completed
-    elif data == "show_completed":
-        progress = get_user_progress(user_id)
-        completed = progress.get("completed_steps", [])
-        if completed:
-            text = f"✅ *Completed Steps:*\n\n"
-            for step in completed:
-                text += f"✓ Step {step}: {STEP_DETAILS[step]['name']}\n"
-                text += f"  Completed: {progress.get(f'step_{step}_completed', 'Date not available')[:10]}\n\n"
-            await query.edit_message_text(text, parse_mode="Markdown", 
-                                          reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="main_menu")]]))
+    # View status
+    elif data == "view_status":
+        data = get_user_step(user_id)
+        all_completed = all(data.get(f"step{i}_verified", False) for i in range(1, 7))
+        if all_completed:
+            await query.edit_message_text(
+                "✅ *BitAI Status: ACTIVE*\n\nYour bot is trading 24/7! 🚀",
+                parse_mode="Markdown",
+                reply_markup=get_completed_keyboard()
+            )
         else:
-            await query.answer("No steps completed yet. Start with Step 1!")
+            progress_bar, completed = get_progress_bar(user_id)
+            await query.edit_message_text(
+                f"📊 *Your Progress*\n\n{progress_bar}\n\n✅ {completed}/6 steps completed\n\nType /start to continue.",
+                parse_mode="Markdown"
+            )
     
-    # Restart setup
-    elif data == "restart_setup":
-        user_data[str(user_id)] = {
-            "completed_steps": [],
-            "current_step": 1,
-            "state": STATE_SETUP,
-            "last_reminder": None,
-            "reminder_count": 0,
-            "last_action": datetime.now().isoformat()
-        }
-        save_json(USER_DATA_FILE, user_data)
-        await show_step(update, context, 1, edit_mode=True)
-
-# ============= ADMIN COMMAND =============
-async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    # Need help
+    elif data.startswith("help_step_"):
+        step_num = int(data.replace("help_step_", ""))
+        step = STEPS[step_num]
+        help_text = (
+            f"❓ *Help for Step {step_num}: {step['title']}*\n\n"
+            f"*Common Issues:*\n\n"
+            f"**Can't join channel?**\n"
+            f"• Click the JOIN CHANNEL button\n"
+            f"• Telegram will open the channel\n"
+            f"• Click 'Join'\n"
+            f"• Return to bot and click verification\n\n"
+            f"**Registration issues?**\n"
+            f"• Check your email for verification\n"
+            f"• Use a valid email address\n"
+            f"• Check spam folder\n\n"
+            f"**Still stuck?** Contact support: http://wa.me/6589691668"
+        )
+        await query.edit_message_text(
+            help_text,
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Back to Step", callback_data=f"resume_step_{step_num}")],
+                [InlineKeyboardButton("📞 Contact Support", url="http://wa.me/6589691668")]
+            ])
+        )
     
-    if ADMIN_ID and user_id == ADMIN_ID:
-        pending = get_pending_users()
-        if pending:
-            text = f"📋 *ADMIN PANEL* - {len(pending)} Pending Review(s)\n\n"
-            for uid, data in pending.items():
-                step = data['step']
-                text += f"• User `{uid}` - Step {step}: {STEP_DETAILS[step]['name']}\n"
-            await update.message.reply_text(text, parse_mode="Markdown", reply_markup=get_admin_keyboard())
-        else:
-            await update.message.reply_text("✅ No pending approvals to review.")
+    elif data == "no_action":
+        await query.answer()
+    
     else:
-        await update.message.reply_text("⛔ Access denied. Admin only.")
+        await query.answer()
 
 # ============= MAIN =============
 async def post_init(application: Application):
-    # Run reminder check every hour
+    """Start reminder loop"""
     application.job_queue.run_repeating(reminder_loop, interval=3600, first=10)
 
 def main():
     if not BOT_TOKEN:
-        print("ERROR: BOT_TOKEN not set!")
+        print("ERROR: BOT_TOKEN environment variable not set!")
         return
     
     if ADMIN_ID == 0:
-        print("WARNING: ADMIN_ID not set!")
+        print("WARNING: ADMIN_ID not set. Please add ADMIN_ID environment variable.")
     
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CallbackQueryHandler(handle_callback))
     
-    print("✅ Bot is running!")
+    print("✅ BitAI Bot is running!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 # Flask for Render
