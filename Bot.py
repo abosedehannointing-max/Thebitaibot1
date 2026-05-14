@@ -14,17 +14,14 @@ if not BOT_TOKEN:
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Store user progress
-user_progress = {}
-
-# Video URLs (Direct Google Drive download links)
-WELCOME_VIDEO = "https://drive.google.com/uc?export=download&id=1STOhv9qCUe5RxnwvSF9koJoLswOLIpD_"
-VIDEO_1 = "https://drive.google.com/uc?export=download&id=1TGACWYMSRR2x8NLkQgA3-_JgH-fUJUBg"
-VIDEO_2 = "https://drive.google.com/uc?export=download&id=1VLidHqhUWQv6K_6Q0s3GYHVKPBgkeVxt"
-VIDEO_3 = "https://drive.google.com/uc?export=download&id=1pSg-u3q4YvoZHB3DETFyBQFjRGczoCJj"
-VIDEO_4 = "https://drive.google.com/uc?export=download&id=1nUcCkcp_jv6FN6hwHxIADmxktlG6-M6k"
-VIDEO_5 = "https://drive.google.com/uc?export=download&id=1bRXrOM-I0UuoBWetbX-EcspvAniU6x4D"
-VIDEO_6 = "https://drive.google.com/uc?export=download&id=1-WystTVv0Wwawhak6xBZlU0yXyTChZmP"
+# Video URLs - Catbox direct links (ALL WORKING)
+WELCOME_VIDEO = "https://files.catbox.moe/b2unen.mp4"
+VIDEO_1 = "https://files.catbox.moe/u392du.mp4"
+VIDEO_2 = "https://files.catbox.moe/wn3azc.mp4"
+VIDEO_3 = "https://files.catbox.moe/tb0jm3.mp4"
+VIDEO_4 = "https://files.catbox.moe/tb0jm3.mp4"  # Same as step 3
+VIDEO_5 = "https://files.catbox.moe/0z82y0.mp4"
+VIDEO_6 = "https://files.catbox.moe/eowij6.mp4"
 
 # Message texts
 WELCOME_TEXT = """🚀 *Welcome to BitAI by Affinity AI*
@@ -80,7 +77,7 @@ Once done, BitAI will start to analyze real time market data and execute your tr
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start command - sends welcome video and message"""
     user_id = update.effective_user.id
-    user_progress[user_id] = 0
+    context.user_data['step'] = 0
     
     keyboard = [
         [InlineKeyboardButton("📝 Register FREE BitAI", url="https://app.bitai.com.sg/h5/#/pages/sign/sign?invite=888")],
@@ -90,7 +87,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Send video embedded
     try:
         await update.message.reply_video(
             video=WELCOME_VIDEO,
@@ -100,7 +96,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except Exception as e:
         logger.error(f"Failed to send video: {e}")
-        # Fallback to text only
         await update.message.reply_text(WELCOME_TEXT, reply_markup=reply_markup, parse_mode='Markdown')
 
 async def show_step1(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -429,7 +424,7 @@ async def back_to_step5(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     """Start the bot"""
-    # Delete any existing webhook and clear updates
+    # Delete any existing webhook
     try:
         requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook")
         requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?offset=-1&timeout=1")
@@ -462,7 +457,7 @@ def main():
     application.add_handler(CallbackQueryHandler(step6_done, pattern="^step6_done$"))
     application.add_handler(CallbackQueryHandler(restart_setup, pattern="^restart$"))
     
-    logger.info("Bot is starting with embedded videos...")
+    logger.info("Bot is starting with Catbox videos...")
     application.run_polling(
         drop_pending_updates=True,
         allowed_updates=Update.ALL_TYPES,
