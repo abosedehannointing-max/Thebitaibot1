@@ -1,20 +1,44 @@
+import sys
 import logging
 import os
 import asyncio
 import requests
+from threading import Thread
+from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+
+# Force immediate log output
+print("Starting bot...", flush=True)
+sys.stdout.flush()
 
 # Get bot token from environment variable
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("No TELEGRAM_BOT_TOKEN found in environment variables")
 
+print(f"Bot token loaded: {BOT_TOKEN[:10]}...", flush=True)
+
 # Enable logging
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
-# Video URLs - Catbox direct links (ALL WORKING)
+# Flask app for health checks
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is running"
+
+def run_health_server():
+    port = int(os.environ.get('PORT', 10000))
+    print(f"Starting health server on port {port}...", flush=True)
+    app.run(host='0.0.0.0', port=port)
+
+# Video URLs - Catbox direct links
 WELCOME_VIDEO = "https://files.catbox.moe/b2unen.mp4"
 VIDEO_1 = "https://files.catbox.moe/u392du.mp4"
 VIDEO_2 = "https://files.catbox.moe/wn3azc.mp4"
@@ -94,8 +118,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
+        print(f"Welcome video sent to user {user_id}", flush=True)
     except Exception as e:
         logger.error(f"Failed to send video: {e}")
+        print(f"Error sending welcome video: {e}", flush=True)
         await update.message.reply_text(WELCOME_TEXT, reply_markup=reply_markup, parse_mode='Markdown')
 
 async def show_step1(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -124,8 +150,10 @@ async def show_step1(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
+        print("Step 1 video sent", flush=True)
     except Exception as e:
         logger.error(f"Failed to send video: {e}")
+        print(f"Error sending step 1 video: {e}", flush=True)
         if update.callback_query:
             await update.callback_query.edit_message_text(STEP1_TEXT, reply_markup=reply_markup, parse_mode='Markdown')
         else:
@@ -135,6 +163,7 @@ async def step1_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("✅ *Great! Step 1 completed!*\n\nMoving to Step 2...", parse_mode='Markdown')
+    print("Step 1 completed by user", flush=True)
     await asyncio.sleep(1)
     await show_step2(update, context)
 
@@ -142,6 +171,7 @@ async def step1_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("⏩ *Step 1 skipped*\n\nMoving to Step 2...", parse_mode='Markdown')
+    print("Step 1 skipped by user", flush=True)
     await asyncio.sleep(1)
     await show_step2(update, context)
 
@@ -172,8 +202,10 @@ async def show_step2(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
+        print("Step 2 video sent", flush=True)
     except Exception as e:
         logger.error(f"Failed to send video: {e}")
+        print(f"Error sending step 2 video: {e}", flush=True)
         if update.callback_query:
             await update.callback_query.edit_message_text(STEP2_TEXT, reply_markup=reply_markup, parse_mode='Markdown')
         else:
@@ -183,6 +215,7 @@ async def step2_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("✅ *Great! Step 2 completed!*\n\nMoving to Step 3...", parse_mode='Markdown')
+    print("Step 2 completed by user", flush=True)
     await asyncio.sleep(1)
     await show_step3(update, context)
 
@@ -190,6 +223,7 @@ async def step2_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("⏩ *Step 2 skipped*\n\nMoving to Step 3...", parse_mode='Markdown')
+    print("Step 2 skipped by user", flush=True)
     await asyncio.sleep(1)
     await show_step3(update, context)
 
@@ -218,8 +252,10 @@ async def show_step3(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
+        print("Step 3 video sent", flush=True)
     except Exception as e:
         logger.error(f"Failed to send video: {e}")
+        print(f"Error sending step 3 video: {e}", flush=True)
         if update.callback_query:
             await update.callback_query.edit_message_text(STEP3_TEXT, reply_markup=reply_markup, parse_mode='Markdown')
         else:
@@ -229,6 +265,7 @@ async def step3_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("✅ *Great! Step 3 completed!*\n\nMoving to Step 4...", parse_mode='Markdown')
+    print("Step 3 completed by user", flush=True)
     await asyncio.sleep(1)
     await show_step4(update, context)
 
@@ -236,6 +273,7 @@ async def step3_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("⏩ *Step 3 skipped*\n\nMoving to Step 4...", parse_mode='Markdown')
+    print("Step 3 skipped by user", flush=True)
     await asyncio.sleep(1)
     await show_step4(update, context)
 
@@ -264,8 +302,10 @@ async def show_step4(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
+        print("Step 4 video sent", flush=True)
     except Exception as e:
         logger.error(f"Failed to send video: {e}")
+        print(f"Error sending step 4 video: {e}", flush=True)
         if update.callback_query:
             await update.callback_query.edit_message_text(STEP4_TEXT, reply_markup=reply_markup, parse_mode='Markdown')
         else:
@@ -275,6 +315,7 @@ async def step4_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("✅ *Great! Step 4 completed!*\n\nMoving to Step 5...", parse_mode='Markdown')
+    print("Step 4 completed by user", flush=True)
     await asyncio.sleep(1)
     await show_step5(update, context)
 
@@ -282,6 +323,7 @@ async def step4_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("⏩ *Step 4 skipped*\n\nMoving to Step 5...", parse_mode='Markdown')
+    print("Step 4 skipped by user", flush=True)
     await asyncio.sleep(1)
     await show_step5(update, context)
 
@@ -310,8 +352,10 @@ async def show_step5(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
+        print("Step 5 video sent", flush=True)
     except Exception as e:
         logger.error(f"Failed to send video: {e}")
+        print(f"Error sending step 5 video: {e}", flush=True)
         if update.callback_query:
             await update.callback_query.edit_message_text(STEP5_TEXT, reply_markup=reply_markup, parse_mode='Markdown')
         else:
@@ -321,6 +365,7 @@ async def step5_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("✅ *Great! Step 5 completed!*\n\nMoving to final Step 6...", parse_mode='Markdown')
+    print("Step 5 completed by user", flush=True)
     await asyncio.sleep(1)
     await show_step6(update, context)
 
@@ -328,6 +373,7 @@ async def step5_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("⏩ *Step 5 skipped*\n\nMoving to final Step 6...", parse_mode='Markdown')
+    print("Step 5 skipped by user", flush=True)
     await asyncio.sleep(1)
     await show_step6(update, context)
 
@@ -357,8 +403,10 @@ async def show_step6(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
+        print("Step 6 video sent", flush=True)
     except Exception as e:
         logger.error(f"Failed to send video: {e}")
+        print(f"Error sending step 6 video: {e}", flush=True)
         if update.callback_query:
             await update.callback_query.edit_message_text(STEP6_TEXT, reply_markup=reply_markup, parse_mode='Markdown')
         else:
@@ -390,10 +438,12 @@ Thank you for choosing BitAI! 🚀"""
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await query.edit_message_text(completion_msg, reply_markup=reply_markup, parse_mode='Markdown')
+    print("Setup completed by user", flush=True)
 
 async def restart_setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    print("Restarting setup for user", flush=True)
     await start(update, context)
 
 # Back navigation handlers
@@ -424,14 +474,22 @@ async def back_to_step5(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     """Start the bot"""
-    # Delete any existing webhook
+    # Start health server in background
+    print("Starting health server thread...", flush=True)
+    Thread(target=run_health_server, daemon=True).start()
+    
+    # Delete any existing webhook and clear updates
     try:
+        print("Clearing webhook and updates...", flush=True)
         requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook")
         requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?offset=-1&timeout=1")
         logger.info("Cleared existing webhook and updates")
+        print("Webhook cleared", flush=True)
     except Exception as e:
         logger.warning(f"Could not clear webhook: {e}")
+        print(f"Error clearing webhook: {e}", flush=True)
     
+    print("Building application...", flush=True)
     application = Application.builder().token(BOT_TOKEN).build()
     
     # Command handlers
@@ -457,7 +515,10 @@ def main():
     application.add_handler(CallbackQueryHandler(step6_done, pattern="^step6_done$"))
     application.add_handler(CallbackQueryHandler(restart_setup, pattern="^restart$"))
     
+    print("Bot is starting with Catbox videos...", flush=True)
     logger.info("Bot is starting with Catbox videos...")
+    
+    # Start the bot
     application.run_polling(
         drop_pending_updates=True,
         allowed_updates=Update.ALL_TYPES,
